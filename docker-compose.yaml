@@ -74,8 +74,6 @@ services:
       - ./.env
     environment:
       - LIVEKIT_URL=ws://livekit:7880
-      - SPEACHES_URL=http://speaches:8000
-      - KOKORO_URL=http://kokoro:8880
     volumes:
       - caal-memory:/app/data
       - ./settings.json:/app/settings.json  # Runtime settings (created on first save)
@@ -86,67 +84,9 @@ services:
     depends_on:
       livekit:
         condition: service_healthy
-      speaches:
-        condition: service_healthy
-      kokoro:
-        condition: service_healthy
     restart: unless-stopped
 
-  # ===========================================================================
-  # Speaches - STT (Faster-Whisper)
-  # ===========================================================================
-  speaches:
-    image: ghcr.io/speaches-ai/speaches:latest-cuda-12.6.3
-    container_name: caal-speaches
-    ports:
-      - "${SPEACHES_PORT:-8000}:8000"
-    volumes:
-      - speaches-cache:/root/.cache/huggingface
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
-    restart: unless-stopped
-    networks:
-      - caal-network
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 60s
 
-  # ===========================================================================
-  # Kokoro - TTS (remsky/kokoro-fastapi)
-  # ===========================================================================
-  # Using v0.2.4-master for RTX 50 series (Blackwell/sm_120) GPU support
-  # See: https://github.com/remsky/Kokoro-FastAPI/releases/tag/v0.2.4-master
-  kokoro:
-    image: ghcr.io/remsky/kokoro-fastapi-gpu:v0.2.4-master
-    container_name: caal-kokoro
-    ports:
-      - "${KOKORO_PORT:-8880}:8880"
-    volumes:
-      - kokoro-cache:/root/.cache
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
-    restart: unless-stopped
-    networks:
-      - caal-network
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8880/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 60s
 
   # ===========================================================================
   # Frontend - Next.js Web Interface
@@ -217,7 +157,3 @@ networks:
 volumes:
   caal-memory:
     name: caal-memory
-  speaches-cache:
-    name: caal-speaches-cache
-  kokoro-cache:
-    name: caal-kokoro-cache

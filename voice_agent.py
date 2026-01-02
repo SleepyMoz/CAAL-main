@@ -13,10 +13,6 @@ Configuration:
     - prompt/default.md: Agent system prompt
 
 Environment Variables:
-    SPEACHES_URL        - Speaches STT service URL (default: "http://speaches:8000")
-    KOKORO_URL          - Kokoro TTS service URL (default: "http://kokoro:8880")
-    WHISPER_MODEL       - Whisper model for STT (default: "Systran/faster-whisper-small")
-    TTS_VOICE           - Kokoro voice name (default: "af_heart")
     OPENAI_BASE_URL     - OpenAI compatible API base URL
     OPENAI_API_KEY      - OpenAI API Key
     OPENAI_MODEL        - LLM model name (default: "gpt-4o")
@@ -44,7 +40,6 @@ load_dotenv(os.path.join(_script_dir, ".env"))
 
 from livekit import agents
 from livekit.agents import AgentSession, Agent, RoomInputOptions, mcp
-from livekit.plugins import silero, openai
 
 from caal import OpenAILLM
 from caal.integrations import (
@@ -75,10 +70,7 @@ logging.getLogger("caal").setLevel(logging.INFO)  # Our package - INFO level
 # =============================================================================
 
 # Infrastructure config (from .env only - URLs, tokens, etc.)
-SPEACHES_URL = os.getenv("SPEACHES_URL", "http://speaches:8000")
-WHISPER_MODEL = os.getenv("WHISPER_MODEL", "Systran/faster-whisper-small")
-KOKORO_URL = os.getenv("KOKORO_URL", "http://kokoro:8880")
-TTS_MODEL = os.getenv("TTS_MODEL", "kokoro")  # "kokoro" for Kokoro-FastAPI, "prince-canuma/Kokoro-82M" for mlx-audio
+
 TIMEZONE_ID = os.getenv("TIMEZONE", "America/Los_Angeles")
 TIMEZONE_DISPLAY = os.getenv("TIMEZONE_DISPLAY", "Pacific Time")
 
@@ -99,7 +91,6 @@ def get_runtime_settings() -> dict:
     settings = settings_module.load_settings()
 
     return {
-        "tts_voice": settings.get("tts_voice") or os.getenv("TTS_VOICE", "am_puck"),
         "model": settings.get("model") or OPENAI_MODEL,
         "temperature": settings.get("temperature", float(os.getenv("OPENAI_TEMPERATURE", "0.7"))),
         "tool_cache_size": settings.get("tool_cache_size", int(os.getenv("TOOL_CACHE_SIZE", "3"))),
@@ -231,50 +222,18 @@ async def entrypoint(ctx: agents.JobContext) -> None:
 
     # Log configuration
     logger.info("=" * 60)
-    logger.info("STARTING VOICE AGENT")
+    logger.info("STARTING CHAT AGENT")
     logger.info("=" * 60)
-    logger.info(f"  STT: {SPEACHES_URL} ({WHISPER_MODEL})")
-    logger.info(f"  TTS: {KOKORO_URL} ({runtime['tts_voice']})")
     logger.info(f"  LLM: OpenAI Compatible ({runtime['model']}) @ {OPENAI_BASE_URL}")
     logger.info(f"  MCP: {list(mcp_servers.keys()) or 'None'}")
     logger.info("=" * 60)
 
-    # Create session with Speaches STT and Kokoro TTS (both OpenAI-compatible)
+    # Create session (Chat Only)
     session = AgentSession(
-        stt=openai.STT(
-            base_url=f"{SPEACHES_URL}/v1",
-            api_key="not-needed",  # Speaches doesn't require auth
-            model=WHISPER_MODEL,
-        ),
         llm=llm_instance,
-        tts=openai.TTS(
-            base_url=f"{KOKORO_URL}/v1",
-            api_key="not-needed",  # Kokoro doesn't require auth
-            model=TTS_MODEL,
-            voice=runtime["tts_voice"],
-        ),
-        vad=silero.VAD.load(),
     )
 
-    # ==========================================================================
-    # Round-trip latency tracking
-    # ==========================================================================
 
-    _transcription_time: float | None = None
-
-    @session.on("user_input_transcribed")
-    def on_user_input_transcribed(ev) -> None:
-        nonlocal _transcription_time
-        _transcription_time = time.perf_counter()
-        logger.debug(f"User said: {ev.transcript[:80]}...")
-
-    @session.on("agent_state_changed")
-    def on_agent_state_changed(ev) -> None:
-        nonlocal _transcription_time
-        if ev.new_state == "speaking" and _transcription_time is not None:
-            latency_ms = (time.perf_counter() - _transcription_time) * 1000
-            logger.info(f"ROUND-TRIP LATENCY: {latency_ms:.0f}ms (LLM + TTS)")
-            _transcription_time = None
 
     async def _publish_tool_status(
         tool_used: bool,
@@ -337,7 +296,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
             instructions="Greet the user briefly and let them know you're ready to help."
         )
 
-        logger.info("Agent ready - listening for speech...")
+        logger.info("Agent ready - waiting for chat messages...")
 
         # Wait until session closes (room disconnects, etc.)
         await close_event.wait()
