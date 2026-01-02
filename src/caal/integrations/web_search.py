@@ -109,10 +109,15 @@ class WebSearchTools:
         results_text = "\n".join(formatted)
         prompt = SUMMARIZE_PROMPT.format(query=query, results=results_text)
 
-        # Use agent's model for summarization
-        model = getattr(self.llm, "model", "gpt-4o")
-        api_key = getattr(self.llm, "api_key", None)
-        base_url = getattr(self.llm, "base_url", None) or os.getenv("OPENAI_BASE_URL")
+        # Get LLM config - try agent's llm first, then session's llm
+        llm = self.llm
+        if llm is None and hasattr(self, 'session') and self.session:
+            llm = self.session._llm if hasattr(self.session, '_llm') else None
+        
+        # Extract model settings from LLM if available
+        model = getattr(llm, "model", None) or os.getenv("OPENAI_MODEL", "gpt-4o")
+        api_key = getattr(llm, "api_key", None) or os.getenv("OPENAI_API_KEY")
+        base_url = getattr(llm, "base_url", None) or os.getenv("OPENAI_BASE_URL")
 
         client = AsyncOpenAI(api_key=api_key, base_url=base_url)
 

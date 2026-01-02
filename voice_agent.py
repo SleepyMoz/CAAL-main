@@ -41,15 +41,14 @@ load_dotenv(os.path.join(_script_dir, ".env"))
 from livekit import agents
 from livekit.agents import AgentSession, Agent, mcp
 from livekit.agents.voice.room_io import RoomOptions
+from livekit.plugins import openai as openai_plugin
 
-from caal import OpenAILLM
 from caal.integrations import (
     load_mcp_config,
     initialize_mcp_servers,
     WebSearchTools,
     discover_n8n_workflows,
 )
-from caal.llm import openai_llm_node, ToolDataCache
 from caal import session_registry
 
 # Configure logging (LiveKit CLI reconfigures root logger, so set our level explicitly)
@@ -120,18 +119,14 @@ class VoiceAssistant(WebSearchTools, Agent):
 
     def __init__(
         self,
-        llm_instance: OpenAILLM,
         mcp_servers: dict[str, mcp.MCPServerHTTP] | None = None,
         n8n_workflow_tools: list[dict] | None = None,
         n8n_workflow_name_map: dict[str, str] | None = None,
         n8n_base_url: str | None = None,
         on_tool_status: ToolStatusCallback | None = None,
-        tool_cache_size: int = 3,
-        max_turns: int = 20,
     ) -> None:
         super().__init__(
             instructions=load_prompt(),
-            llm=llm_instance,  # Satisfies LLM interface requirement
         )
 
         # All MCP servers (for multi-MCP support)
@@ -146,24 +141,12 @@ class VoiceAssistant(WebSearchTools, Agent):
         # Callback for publishing tool status to frontend
         self._on_tool_status = on_tool_status
 
-        # Context management: tool data cache and sliding window
-        self._tool_data_cache = ToolDataCache(max_entries=tool_cache_size)
-        self._max_turns = max_turns
-
-    async def llm_node(self, chat_ctx, tools, model_settings):
-        """Custom LLM node using OpenAI compatible API."""
-        # Access config from OpenAILLM instance via self.llm
-        async for chunk in openai_llm_node(
-            self,
-            chat_ctx,
-            model=self.llm.model,
-            api_key=self.llm.api_key,
-            base_url=self.llm.base_url,
-            temperature=self.llm.temperature,
-            tool_data_cache=self._tool_data_cache,
-            max_turns=self._max_turns,
-        ):
-            yield chunk
+    async def on_enter(self):
+        """Called when the agent enters the session."""
+        # Generate an initial greeting
+        self.session.generate_reply(
+            instructions="Greet the user briefly and let them know you're ready to help."
+        )
 
 
 # =============================================================================
@@ -213,8 +196,9 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     # Get runtime settings (from settings.json with .env fallback)
     runtime = get_runtime_settings()
 
-    # Create OpenAILLM instance
-    llm_instance = OpenAILLM(
+    # Create LLM instance using official LiveKit OpenAI plugin
+    # This supports OpenRouter and other OpenAI-compatible APIs via base_url
+    llm_instance = openai_plugin.LLM(
         model=runtime["model"],
         api_key=OPENAI_API_KEY,
         base_url=OPENAI_BASE_URL,
@@ -229,7 +213,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     logger.info(f"  MCP: {list(mcp_servers.keys()) or 'None'}")
     logger.info("=" * 60)
 
-    # Create session (Chat Only)
+    # Create session (Chat Only - no STT/TTS)
     session = AgentSession(
         llm=llm_instance,
     )
@@ -261,16 +245,13 @@ async def entrypoint(ctx: agents.JobContext) -> None:
 
     # ==========================================================================
 
-    # Create agent with OpenAILLM and all MCP servers
+    # Create agent with MCP servers
     assistant = VoiceAssistant(
-        llm_instance=llm_instance,
         mcp_servers=mcp_servers,
         n8n_workflow_tools=n8n_workflow_tools,
         n8n_workflow_name_map=n8n_workflow_name_map,
         n8n_base_url=n8n_base_url,
         on_tool_status=_publish_tool_status,
-        tool_cache_size=runtime["tool_cache_size"],
-        max_turns=runtime["max_turns"],
     )
 
     # Start session (text-only mode - audio disabled)
@@ -295,11 +276,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         close_event.set()
 
     try:
-        # Send initial greeting
-        await session.generate_reply(
-            instructions="Greet the user briefly and let them know you're ready to help."
-        )
-
+        # Agent's on_enter method handles the initial greeting
         logger.info("Agent ready - waiting for chat messages...")
 
         # Wait until session closes (room disconnects, etc.)
