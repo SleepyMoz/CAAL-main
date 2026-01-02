@@ -39,7 +39,8 @@ _script_dir = os.path.dirname(os.path.abspath(__file__))
 load_dotenv(os.path.join(_script_dir, ".env"))
 
 from livekit import agents
-from livekit.agents import AgentSession, Agent, RoomInputOptions, mcp
+from livekit.agents import AgentSession, Agent, mcp
+from livekit.agents.voice.room_io import RoomOptions
 
 from caal import OpenAILLM
 from caal.integrations import (
@@ -272,11 +273,14 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         max_turns=runtime["max_turns"],
     )
 
-    # Start session
+    # Start session (text-only mode - audio disabled)
     await session.start(
         room=ctx.room,
         agent=assistant,
-        room_input_options=RoomInputOptions(),
+        room_options=RoomOptions(
+            audio_input=False,
+            audio_output=False,
+        ),
     )
 
     # Register session for webhook access
